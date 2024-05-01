@@ -1,0 +1,2102 @@
+---
+title: "Final Project"
+author: "Huynh Huu Phuc"
+date: "2023-07-30"
+output:
+  word_document:
+    toc: yes
+    toc_depth: '3'
+  pdf_document:
+    latex_engine: xelatex
+    toc: yes
+    toc_depth: 3
+    number_sections: yes
+    extra_dependencies:
+    - tcolorbox
+    - tikz
+  html_document:
+    toc: yes
+    toc_depth: '3'
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE, 
+  warning = FALSE, 
+  message = FALSE, 
+  fig.align='center', 
+  dpi=200, 
+  out.width="70%", 
+  comment = NA)
+```
+
+# Including Library
+
+```{r lib}
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(RColorBrewer)
+library(pastecs)
+library(GGally)
+library(corrplot)
+library(lmtest)
+library(car)
+library(fastDummies)
+library(leaps)
+```
+
+```{r function}
+outliers <- function(x){
+  # 1st and 3rd quantiles
+  q75 = quantile(x, 0.75)
+  q25 = quantile(x, 0.25)
+  IQR = q75-q25
+  # lower bound
+  lower_bound = q25 - 1.5 * IQR
+  # upper bound
+  upper_bound = q75 + 1.5 * IQR
+  # outliers
+  outlier_ind <- which(x < lower_bound | x > upper_bound)
+  if (length(outlier_ind) == 0){
+    return (0)
+  }
+  return(outlier_ind)
+}
+```
+
+# Activity 1
+
+## About the dataset
+
+```{r}
+attend<-read.csv('attend.csv', header = TRUE, na.strings = "")
+```
+
+The dataset has 11 columns and 680 observations
+
+1.  attend: classes attended out of 32
+
+2.  termGPA: GPA for term
+
+3.  priGPA: cumulative GPA prior to term
+
+4.  ACT: ACT score
+
+5.  final: final exam score
+
+6.  atndrte: percent classes attended
+
+7.  hwrte: percent homework turned in
+
+8.  frosh: 1 if freshman, otherwise is 0
+
+9.  soph: 1 if sophomore, otherwise is 0
+
+10. skipped: number of classes skipped
+
+11. stndfnl: standardizing the values of final, which is defined by formula (final - mean)/sd, where mean, sd are the median, standard deviation of final, respectively
+
+These data were collected by Professors Ronald Fisher and Carl Liedholm during a term in which they both taught principles of microeconomics at Michigan State University. Professors Fisher and Liedholm kindly gave me permission to use a random subset of their data, and their research assistant at the time, Jeffrey Guilfoyle, provided helpful hints
+
+First few row of dataset
+
+```{r}
+head(attend)
+```
+
+**Goal**: The dataset aims to determine the impact of several factors, including term GPA, cumulative term GPA, ACT score, percentage of classes attended, percentage of assignments turned in, and student level (freshman, sophomore, other), on the final score exam.
+
+## Cleaning datasets
+
+Consider the type of attribute
+
+```{r}
+str(attend)
+```
+
+Check whether there is missing data.
+
+```{r, echo = TRUE}
+sum(is.na(attend))
+```
+
+However, the **hwrte** attribute should be numeric instead of characters. There might be some unusual value here.
+
+```{r, echo = TRUE}
+unique(attend$hwrte)
+```
+
+There is wrong data which is "." value.
+
+```{r, echo = TRUE}
+attend$hwrte[attend$hwrte=="."] <- NA
+sum(is.na(attend$hwrte))
+```
+
+There are 6 row that is not correct so we replace it by the median of hwrte.
+
+```{r}
+attend$hwrte = as.numeric(attend$hwrte)
+attend$hwrte[is.na(attend$hwrte)] = median(attend$hwrte,na.rm = TRUE)
+unique(attend$hwrte)
+```
+
+```{r}
+# backup clean data
+attend_clean<-attend
+```
+
+## Correlation
+
+```{r out.width = "\\textwidth"}
+corrplot(cor(attend), order = 'AOE',tl.pos="lt", tl.col="black", tl.cex=0.75)
+```
+
+There are strong correlation between final score and termGPA, priGPA and ACT. The stndfnl attribute is a normalized value of final, as a result, it has strong correlation with final.
+
+## Descriptive statistics
+
+### Levels
+
+```{r, fig.asp = 0.7, fig.width = 6}
+attend$level = 'Other'
+attend$level[attend$frosh == 1] = 'Freshman'
+attend$level[attend$soph == 1] = 'Sophomore'
+
+attend$level = factor(attend$level,
+                      levels=c("Freshman", "Sophomore", "Other"))
+
+attend %>% 
+  group_by(level) %>%
+  summarise(count=n()) %>%
+  mutate(percent = count/sum(count)) %>% 
+  mutate(labels = scales::percent(percent)) %>%
+  ggplot(aes(x="", y=percent, fill=level)) +
+    geom_bar(stat='identity') +
+    coord_polar(theta = "y", start = 0) +
+    theme_bw() +
+    ggtitle("Percentage of student's level") +
+    theme(plot.title = element_text(hjust = 0.5),
+          axis.text = element_blank(),
+          axis.title = element_blank(),
+          panel.grid = element_blank()) +
+    geom_label(aes(label = labels),colour = "black",
+             position = position_stack(vjust = 0.5),
+             show.legend = FALSE)
+
+```
+
+The chart reveals that the majority of students participating in the survey are Sophomores, accounting for 56.7%. Additionally, the Sophomore category is around 2.445 times larger than the Freshman category and approximately 2.96 times larger than the Other category, which may consist of Juniors and Seniors. This indicates that Sophomores are significantly more prevalent in the dataset compared to others category.
+
+```{r}
+attend %>% 
+  ggplot(aes(x=level, y=final, fill=level))+
+  geom_boxplot(show.legend = FALSE, width=0.3)+
+  theme_bw()+
+  ggtitle('Boxplot final score by level')+
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+From the chart, it can be observed that students in the Other and Sophomore categories have a wider and higher range of final scores compared to Freshman. This indicates that students in these two categories tend to achieve higher scores on their final exams and have a greater diversity of scores. Additionally, in both the Freshman and Sophomore categories, there is an outlier with a significantly lower score, approximately 10 points.
+
+### Current term GPA
+
+```{r}
+bw = 0.2
+n_obs = nrow(attend)
+
+attend %>%
+  ggplot(aes(x=termGPA))+
+    geom_histogram(binwidth = bw)+
+    theme_bw()+
+    labs(x='GPA for current term', 
+         y='Number of students', 
+         title = 'Histogram of GPA for current term')+
+    theme(plot.title = element_text(hjust = 0.5)) +
+    stat_function(fun = function(x) dnorm(x, mean = mean(attend$termGPA), sd = sd(attend$termGPA)) * bw * n_obs, color = "red")
+```
+
+The min, max, median, Q~1~ and Q~3~ are:
+
+```{r}
+summary(attend$termGPA)
+```
+
+The histogram is bell-shaped, the mean and median are around 2.6 and the histogram is trending upwards between 2.4 and 3.3, corresponding to a score of C to B+. This proves that the majority of students in the survey have average to near good academic achievement. In addition, the graph has a skewed direction with a variety of grades, showing that there are a few students who are still not focused on their studies, leading to a rather low GPA in the term, specifically below 1.
+
+```{r}
+attend %>%
+  ggplot(aes(x=termGPA, y=final)) +
+  geom_point(alpha=0.5,size=2,color='black') +
+  geom_smooth(method=lm, formula=y~x, se = FALSE) +
+  labs(x="GPA for current term", y="Final point",title = "Final point by GPA for current term") +
+  theme_bw()+
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+Besides, the correlation between the two variables final score and termGPA shows that there is a positive relationship between these two types of scores. Students who score well in the final exam will often be more likely to achieve a higher GPA.
+
+### Cumulative GPA
+
+```{r}
+bw = 0.2
+n_obs = nrow(attend)
+
+attend %>%
+  ggplot(aes(x=priGPA))+
+    geom_histogram(binwidth = bw)+
+    theme_bw()+
+    labs(x='Cumulative GPA prior to term', 
+         y='Number of patient', 
+         title = 'Histogram of Cumulative GPA prior to term')+
+    theme(plot.title = element_text(hjust = 0.5)) +
+    stat_function(fun = function(x) dnorm(x, mean = mean(attend$priGPA), sd = sd(attend$priGPA)) * bw * n_obs, color = "red")
+```
+
+The min, max, median, Q~1~ and Q~3~ are:
+
+```{r}
+summary(attend$priGPA)
+```
+
+```{r}
+ggplot(data=attend, aes(x=priGPA, y=final)) +
+geom_point(alpha=0.5,size=2,color='black') +
+geom_smooth(method=lm, formula=y~x, se = FALSE) +
+labs(x="Cumulative GPA prior to term", y="Final point",title = "Final point by Cumulative GPA prior to term") +
+theme_bw()+
+theme(plot.title = element_text(hjust = 0.5))
+```
+
+The chart with standard deviation value is about 0.545 shows a diverse range from 0.857 to 3.93 and uneven distribution in the priGPA scores of students in the data set. In which, mean and median both fall in the range of approximately 2.5, showing that students tend to get average grades, from C to C+. Moreover, it can be seen in the scatter plot that there is a positive relationship between cumulative GPA score and final exam score, which predicts that students with higher cumulative GPA scores are more likely to score well in the final exam.
+
+### ACT score
+
+```{r}
+bw = 1
+n_obs = nrow(attend)
+
+attend %>%
+  ggplot(aes(x=ACT))+
+    geom_histogram(binwidth = bw)+
+    theme_bw()+
+    scale_fill_brewer(palette = 'Set2')+
+    labs(x='ACT score', 
+         y='Number of students', 
+         title = 'Histogram of ACT score')+
+    theme(plot.title = element_text(hjust = 0.5)) +
+    stat_function(fun = function(x) dnorm(x, mean = mean(attend$ACT), sd = sd(attend$ACT)) * bw * n_obs, color = "red")
+
+```
+
+The min, max, median, Q~1~ and Q~3~ are:
+
+```{r}
+summary(attend$ACT)
+```
+
+The histogram of the ACT scores displays a sawtooth pattern, indicating periodic fluctuations in the number of students achieving specific scores within the range of 13 to 32. Additionally, with an average score of approximately 22.5, a median score of around 22.0, and the narrowing shape of the histogram between 20 and 25, it suggests that students tempt to attain scores fluctuating around this range.
+
+```{r}
+ggplot(data=attend, aes(x=ACT, y=final)) +
+geom_point(alpha=0.5,size=2,color='black') +
+geom_smooth(method=lm, formula=y~x, se = FALSE) +
+labs(x="ACT score", y="Final score",title = "Final score by ACT score") +
+theme_bw()+
+theme(plot.title = element_text(hjust = 0.5))
+```
+
+Furthermore, in the scatter plot, there seems to be a positive correlation between the ACT scores and the final grades obtained by the students. However, the dispersion is quite large.
+
+### Percentage of classes attended
+
+```{r}
+bw = 5
+n_obs = nrow(attend)
+
+attend %>%
+  ggplot(aes(x=atndrte))+
+    geom_histogram(binwidth = bw)+
+    theme_bw()+
+    scale_fill_brewer(palette = 'Set2')+
+    labs(x='Percentage of classses attend', 
+         y='Number of students', 
+         title = 'Histogram of Percentage of classed attended')+
+    theme(plot.title = element_text(hjust = 0.5)) +
+    stat_function(fun = function(x) dnorm(x, mean = mean(attend$atndrte), sd = sd(attend$atndrte)) * bw * n_obs, color = "red")
+```
+
+The min, max, median, Q~1~ and Q~3~ are:
+
+```{r}
+summary(attend$atndrte)
+```
+
+From the histogram, it can be observed that students tend to participate in classes quite regularly and actively, as the percentage of students attending classes is relatively high, usually ranging from 80% to 95%. In addition, the outliers of the variable are determined to be below 30%, causing the histogram to be skewed to the left. This indicates that there are a few students with very low attendance, lying outside the acceptable range of the overall distribution.
+
+```{r}
+attend %>% 
+  ggplot(aes(x=factor(atndrte), y=final, fill=factor(atndrte)))+
+  geom_boxplot(show.legend = FALSE, width=0.3)+
+  xlab("Percentage of classed attended")+
+  ylab("Final score")+
+  theme_bw()+
+  ggtitle('Final score by Percentage of classed attended')+
+  theme(plot.title = element_text(hjust = 0.5), axis.text.x = element_text(angle =45, hjust = 1))
+```
+
+While the students attend nearly one-half of class has the mean of final score similar to that of the students who attend all classes. Thus, the data reveals the rate of percentage of class does not reflect the final score exam.
+
+### Percentage homework turned in
+
+```{r}
+bw = 15
+n_obs = nrow(attend)
+
+attend %>%
+  ggplot(aes(x=hwrte))+
+    geom_histogram(binwidth = bw)+
+    theme_bw()+
+    labs(x='Percentage of homework turned in', 
+         y='Number of students', 
+         title = 'Histogram of Percentage of homework turned in')+
+    theme(plot.title = element_text(hjust = 0.5)) +
+    stat_function(fun = function(x) dnorm(x, mean = mean(attend$hwrte), sd = sd(attend$hwrte)) * bw * n_obs, color = "red")
+```
+
+The min, max, median, Q~1~ and Q~3~ are:
+
+```{r}
+summary(attend$hwrte)
+```
+
+The mean and standard deviation value of cumulative GPA prior to term is about `r attend$hwrte %>% mean() %>% round(3)` and `r attend$hwrte %>% sd() %>% round(3)`, respectively. In more detail, histogram shows that the data appears to be separate on one side compared to the other data. This shows that the percentage of homework turn in is not concentrated in a certain range, however, students still tend to submit their papers fully when the top of the graph is skewed towards 100% and this is also the median of the dataset.
+
+```{r}
+attend %>% 
+  ggplot(aes(x=factor(hwrte), y=final, fill=factor(hwrte)))+
+  geom_boxplot(show.legend = FALSE, width=0.3)+
+  xlab("Percentage of homework turned in")+
+  ylab("Final score")+
+  theme_bw()+
+  ggtitle('Final score by Percentage of homework turned in')+
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+According to the boxplot, students who turn in more homework tend to receive a higher score at final exam. However, there is a small percentage of students rarely submit their work, and their final grade is greater than those who submit more than 75% of their work. As a result, the percentage of homework turned in has little bearing on the final score.
+
+### Diligence
+
+The diligence attribute explains how often students show up for class. They are diligent if they attend more than 70% of the scheduled classes. Otherwise, they are considered as not diligence.
+
+```{r}
+attend$diligence[attend$atndrte < 70] = "not diligent"
+attend$diligence[attend$atndrte >= 70] = "diligent"
+
+attend$diligence = factor(attend$diligence,
+                    levels=c("not diligent", "diligent"))
+```
+
+```{r, out.width="70%"}
+attend %>% 
+  group_by(diligence) %>%
+  summarise(count=n()) %>%
+  mutate(percent = count/sum(count)) %>% 
+  mutate(labels = scales::percent(percent)) %>%
+  ggplot(aes(x="", y=percent, fill=diligence)) +
+    geom_bar(stat='identity') +
+    coord_polar(theta = "y") +
+    theme_bw() +
+    ggtitle('Percentage of diligent student') +
+    theme(plot.title = element_text(hjust = 0.5),
+          axis.text = element_blank(),
+          axis.title = element_blank(),
+          panel.grid = element_blank()) +
+    geom_label(aes(label = labels),colour = "black",
+             position = position_stack(vjust = 0.5),
+             show.legend = FALSE)
+
+```
+
+As we observe, most of student are diligent
+
+```{r}
+attend %>% 
+  ggplot(aes(x=diligence, y=final, fill=diligence))+
+  geom_violin() +
+  geom_boxplot(show.legend = FALSE, width=0.3) +
+  theme_bw()
+```
+
+There is a little bit different on final score between student diligent and not diligent student. In more detail, the final score of diligent student is temp to larger than the group of not diligent student.
+
+```{r}
+attend %>%
+  group_by(level, diligence) %>%
+  summarise(count = n()) %>%
+  mutate(percentage = count / sum(count) * 100) %>%
+  ggplot(aes(x = '', y = percentage, fill = diligence))+
+    geom_bar(stat = 'identity') + 
+    coord_polar('y', start = 0) + 
+    facet_wrap(~level, ncol = 3, scale = "fixed") + 
+    ggtitle('Rate of diligence by level') + 
+    xlab('') +
+    ylab('') +
+    theme_bw()+
+    theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+The percentage of diligent student is fluctuated between student's level. From the first pie charts, students that are sophomore, are more diligent than freshman.
+
+### Homework Completion Level
+
+The assignments Completion Level attribute provides an interpretation of the rate of completed assignments. The level of homework completion is high if they complete more than 90% of it. Otherwise, the value is low.
+
+```{r}
+attend$hw_completion[attend$hwrte < 90] = "low"
+attend$hw_completion[attend$hwrte >= 90] = "high"
+
+attend$hw_completion = factor(attend$hw_completion,
+                              levels=c("low", "high"))
+```
+
+```{r}
+attend %>% 
+  group_by(hw_completion) %>%
+  summarise(count=n()) %>%
+  mutate(percent = count/sum(count)) %>% 
+  mutate(labels = scales::percent(percent)) %>%
+  ggplot(aes(x="", y=percent, fill=hw_completion)) +
+    geom_bar(stat='identity') +
+    coord_polar(theta = "y") +
+    theme_bw() +
+    ggtitle('Percentage of homework completion') +
+    theme(plot.title = element_text(hjust = 0.5),
+          axis.text = element_blank(),
+          axis.title = element_blank(),
+          panel.grid = element_blank()) +
+    geom_label(aes(label = labels),colour = "black",
+             position = position_stack(vjust = 0.5),
+             show.legend = FALSE)
+
+```
+
+The percentage of students who are regarded as high appears to be slightly higher than that of students who are judged as low.
+
+```{r}
+attend %>% 
+  ggplot(aes(x=hw_completion, y=final, fill=hw_completion))+
+  geom_violin() +
+  geom_boxplot(show.legend = FALSE, width=0.3)+
+  theme_bw()+
+  labs(x='Homework completion', y='Final score', title = "Final score by homework completion")+
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+According to the boxplot, students who turn in the majority of their homework tend to receive higher grades than those who do not.
+
+```{r}
+attend %>%
+  group_by(level, hw_completion) %>%
+  summarise(count = n()) %>%
+  mutate(percentage = count / sum(count) * 100) %>%
+  ggplot(aes(x = '', y = percentage, fill = hw_completion))+
+    geom_bar(stat = 'identity') + 
+    coord_polar('y', start = 0) + 
+    facet_wrap(~level, ncol = 3, scale = "fixed", nrow=1) + 
+    ggtitle('Percentage of homework completion by level') + 
+    xlab('') +
+    ylab('') +
+    theme_bw() +
+    theme(plot.title = element_text(hjust = 0.5))
+```
+
+The percentage of sophomores who do their homework is higher than that of freshmen, as seen by this figure.
+
+### Final score
+
+```{r}
+bw = 1
+n_obs = nrow(attend)
+
+attend %>%
+  ggplot(aes(x=final))+
+    geom_histogram(binwidth = bw)+
+    theme_bw()+
+    labs(x='Final score', 
+         y='Number of students', 
+         title = 'Distribution of Final score')+
+    theme(plot.title = element_text(hjust = 0.5)) +
+    stat_function(fun = function(x) dnorm(x, mean = mean(attend$final), sd = sd(attend$final)) * bw * n_obs, color = "red")
+```
+
+```{r}
+attend_temp<-attend %>%
+  mutate(final_cat = case_when(
+    final < 20 ~ "below medium",
+    final >= 20 & final < 30 ~ "medium",
+    final >= 30 ~ "good"
+  ))
+
+attend_temp$final_cat <- factor(attend_temp$final_cat, levels = c("good", "medium", "below medium"))  
+  
+attend_temp %>%
+  ggplot(aes(x = termGPA, y = priGPA)) +
+    geom_point(aes(color = final_cat)) +
+    xlab("GPA for current term") +
+    ylab("Cumulative GPA prior to term") +
+    ggtitle("Scatter plot of termGPA vs priGPA") +
+    theme_bw() +
+    labs(color = "Final Score Category") +
+    theme(plot.title = element_text(hjust = 0.5))
+```
+
+The chart depicts a correlation between high term GPA and good performance in the final exam. The chart above indicates that students who score "Good" in the final exam tend to have a high GPA during the term, with cumulative GPA scores ranging from 2.5 to 4. This suggests that the abilities of these students are reflected in their final scores. Additionally, students who achieve a "Medium" score at the end of the term have a broader and more diverse score distribution. Although a few students in this group have a relatively low GPA in the semester or cumulatively, a significant percentage still falls within the average and good range. The "Below medium" group consists of a small number of students but exhibits a high degree of dispersion. Interestingly, some students in this group still achieve GPAs between 3 and 3.5 in both categories. This suggests that these students may have made mistakes or encountered other negative factors that resulted in a low score on the final test. Hence, it is not possible to solely classify students' learning abilities based on their final exam scores.
+
+## Hypothesis Testing
+
+### Level & Final score
+
+```{r}
+attend %>% 
+  filter(level %in% c("Freshman", "Sophomore")) %>%
+  ggplot(aes(x=level, y=final, fill=level))+
+  geom_boxplot(show.legend = FALSE, width=0.3)+
+  theme_bw()+
+  ggtitle('Boxplot final score by level')+
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+$H_0$: The mean final score of freshman greater than or equal to the mean final score of sophomore.
+
+$H_\alpha$: The mean final score of freshman less than the mean final score of sophomore.
+
+Hypothesis Testing: Using t.test function to test whether ***The mean final score of freshman less than the mean final score of sophomore.***
+
+\tcolorbox
+
+```{r}
+attend %>%
+  select(final, level) %>%
+  filter(level %in% c("Freshman", "Sophomore")) %>%
+  t.test(data = ., final~level ,alternative='less')
+  
+```
+
+```{=tex}
+\endtcolorbox
+```
+Since p-value = 0.01958 which is less than 0.05. Thus, we reject the null hypothesis $H_0$ at significant level 𝛼 = 5%. Therefore, there is sufficient evidence to conclude that ***The mean final score of freshman less than the mean final score of sophomore.***
+
+### Diligence & Final score
+
+```{r}
+attend %>% 
+  ggplot(aes(x=diligence, y=final, fill=diligence))+
+  geom_boxplot(show.legend = FALSE, width=0.3)+
+  theme_bw()+
+  ggtitle('Boxplot Final score by Diligence')+
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+Hypothesis Testing: Using t.test function to test whether ***The mean final score of not diligent student is less than to the mean final score of diligent student.***
+
+$H_0$: The mean final score of not diligent student less than the mean final score of diligent student.
+
+$H_\alpha$: The mean final score of not diligent student is less than to the mean final score of diligent student.
+
+\tcolorbox
+
+```{r, echo=TRUE}
+attend %>%
+  select(final, diligence) %>%
+  t.test(data = ., final~diligence ,alternative='less')
+```
+
+```{=tex}
+\endtcolorbox
+```
+Since p-value = 0.0007603 which is extremely less than 0.05. Thus we reject the null hypothesis \$H_0\$ at significant level 𝛼 = 5%. Therefore, there is sufficient evidence to conclude that ***The mean final score of not diligent student is less than to the mean final score of diligent student.***
+
+### Diligence & Level
+
+```{r}
+attend %>%
+  select(level, diligence) %>%
+  filter(level %in% c("Freshman", "Sophomore")) %>%
+  group_by(level, diligence) %>%
+  summarise(count = n()) %>%
+  mutate(percentage = count / sum(count) * 100) %>%
+  ggplot(aes(x = '', y = percentage, fill = diligence))+
+    geom_bar(stat = 'identity') + 
+    coord_polar('y', start = 0) + 
+    facet_wrap(~level, ncol = 2, scale = "fixed") + 
+    ggtitle('Rate of diligent student by Level') + 
+    xlab('') +
+    ylab('') +
+    theme_bw()+
+    theme(plot.title = element_text(hjust = 0.5))
+```
+
+Hypothesis Testing: Using prob.test function to test whether ***The rate of diligent student in first year different from the rate of diligent student in second year.***
+
+$H_0$: The rate of diligent student in first year equal to the rate of diligent student in second year.
+
+$H_\alpha$: The rate of diligent student in first year different from the rate of diligent student in second year.
+
+\tcolorbox
+
+```{r}
+table_level_diligence <- table( attend$level, attend$diligence)
+table_level_diligence <- table_level_diligence[c('Freshman', 'Sophomore'), c("diligent", "not diligent")]
+table_level_diligence
+
+prop.test(table_level_diligence, correct = FALSE, alternative = 'two.sided')
+
+```
+
+```{=tex}
+\endtcolorbox
+```
+Since p-value = 0.3673 which is greater than 0.05. Thus, we do not reject the null hypothesis $H_0$ at significant level 𝛼 = 5%. Therefore, there is ***not sufficient evidence*** to conclude that ***the rate of diligent student in first year different from the rate of diligent student in second year.***
+
+### Level & Homework Completion Level
+
+```{r}
+attend %>%
+  filter(level %in% c("Freshman", "Sophomore")) %>%
+  group_by(level, hw_completion) %>%
+  summarise(count = n()) %>%
+  mutate(percentage = count / sum(count) * 100) %>%
+  ggplot(aes(x = '', y = percentage, fill = hw_completion))+
+    geom_bar(stat = 'identity') + 
+    coord_polar('y', start = 0) + 
+    facet_wrap(~level, ncol = 3, scale = "fixed", nrow=1) + 
+    ggtitle('Percentage of homework completion by level') + 
+    xlab('') +
+    ylab('') +
+    theme_bw() +
+    theme(plot.title = element_text(hjust = 0.5))
+```
+
+Hypothesis Testing: Use prob.test function to test whether the percentage of sophomores doing homework is greater than the percentage of freshman does.
+
+$H_0$: The percentage of sophomores doing homework is less than or equal to the percentage of freshman does.
+
+$H_\alpha$: The percentage of sophomores submit homework is greater than the percentage of freshman does.
+
+\tcolorbox
+
+```{r}
+table_level_hwcomplete <- table(attend$level, attend$hw_completion)
+table_level_hwcomplete <- table_level_hwcomplete[c('Sophomore', 'Freshman'), c('high', 'low')]
+table_level_hwcomplete
+
+prop.test(table_level_hwcomplete, correct = FALSE, alternative = 'greater')
+```
+
+```{=tex}
+\endtcolorbox
+```
+Since p-value = 0.001584 which is extremely small. We reject the null hypothesis $H_0$ at significant level 𝛼 = 5%. Therefore, there is ***sufficient evidence*** to conclude that ***the percentage of sophomores submit their homework is greater than the percentage of freshman does.***
+
+### Homework Completion Level & Final
+
+```{r}
+attend %>% 
+  ggplot(aes(x=hw_completion, y=final, fill=hw_completion))+
+  geom_violin() +
+  geom_boxplot(show.legend = FALSE, width=0.3)+
+  theme_bw()+
+  labs(x='Homework completion', y='Final score', title = "Final score by homework completion")+
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+Hypothesis Testing: Using t.test function to test whether ***The average final grade of a student who consistently submits their homework is higher than that of a student who does not.***
+
+$H_0$: The mean final score of a student who highly submits their homework less than or equal to that of a student who does not.
+
+$H_\alpha$: The mean final score of a student who highly submits their homework greater than that of a student who does not.
+
+\tcolorbox
+
+```{r}
+attend %>%
+  select(final, hw_completion) %>%
+  t.test(data = ., final~hw_completion ,alternative='less')
+```
+
+```{=tex}
+\endtcolorbox
+```
+Since p-value = 0.000426 which is extremely small and less than 0.05. Thus, we reject the null hypothesis $H_0$ at significant level 𝛼 = 5% or even at 𝛼 = 1%. Therefore, there is ***sufficient evidence*** to conclude that ***The mean final score of a student who highly submits their homework greater than that of a student who does not.***
+
+## Regression Model
+
+```{r}
+
+```
+
+### Multicolinear
+
+```{r out.width = "\\textwidth"}
+GGally::ggpairs(attend, columns = c(1,2,3,4,6,7,8,9,10), upper = list(continuous = wrap("cor", size = 2.5))) +
+  theme(axis.line=element_blank(),
+        axis.text=element_blank(),
+        axis.ticks=element_blank(),
+        strip.text.x = element_text(size = 7),
+        strip.text.y = element_text(size = 7))
+
+```
+
+From figure, we observe that there are strong correlation between Percent classes attended (atndrte) and class skipped (skipped) and class attendance (attend).
+
+### Data preparation
+
+The response in our linear model is final score exam which is **final** attribute.
+
+As a result of descriptive statistics, we should not include the attribute Percentage classes attended (atndrte) and Percentage homework turned in (hwrte).
+
+Therefore, we start to build multiple linear regression model from these predictors: termGPA, priGPA, ACT, dummy variables (frosh, soph).
+
+```{r}
+attend_raw <- attend
+```
+
+```{r}
+attend<-attend[,c(2:9)]
+```
+
+```{r}
+attend %>%
+  ggplot(aes(x = "", y=final)) +
+  geom_boxplot() +
+  theme_bw() +
+  xlab("") +
+  ggtitle("Boxplot of Final score") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+There are 2 outliers but this number is quite small so we omit it.
+
+```{r}
+index_outlier <- apply(attend[c('final')],2,outliers)
+attend = attend[-index_outlier,]
+```
+
+New dimension of attend are `r dim(attend)[1]` instances and `r dim(attend)[2]` attributes.
+
+Instead of normalizing the final score (**final**), we transform it into a 4-point scale by dividing it by 10.
+
+```{r}
+attend$final = attend$final/10
+```
+
+Split data into train and validation sets with ratio 80% - 20%, respectively.
+
+```{r}
+smp_size <- floor(0.8 * nrow(attend))
+
+set.seed(42)
+
+index <- sample(seq_len(nrow(attend)), size = smp_size)
+```
+
+The dimension of attend train data
+
+```{r}
+attend_train = attend[index,] #training data set
+dim(attend_train)
+```
+
+The dimension of attend validation data
+
+```{r}
+attend_valid = attend[-index,] #validation data set
+dim(attend_valid)
+```
+
+### Modeling
+
+**Model 1**: we build models using variables with descriptive statistics insight.
+
+The predictors are: termGPA, priGPA, ACT
+
+```{r, echo=TRUE}
+model_1_1<-lm(final ~ termGPA + priGPA + ACT, data=attend_train)
+summary(model_1_1)
+```
+
+Based on the result of summary function, there is a negative correlation between final score (outcome) and the priGPA. There may some effect on this due to the cumulative GPA to term (priGPA) of freshman is not significant. So we construct a different model that consider the interaction between the student's level and priGPA.
+
+**Model 2**: Replace variable priGPA in Model 1 by the variables that account for interaction between student's level and priGPA.
+
+```{r}
+model_1_2<-lm(final ~ termGPA + ACT + I(priGPA*frosh) + I(priGPA*soph), data=attend_train)
+summary(model_1_2)
+```
+
+We test if coefficient of priGPA\*frosh is equal to 0 using significant level $\alpha$ = 5%. From the output of summary function, the p-value of t.test is 0.2597 which is higher than 0.05. Thus, we fail to reject the null hypothesis $H_0$.
+
+Build model 2 again without predictor priGPA\*frosh.
+
+```{r}
+model_1_2<-lm(final ~ termGPA + ACT + I(priGPA*soph), data=attend_train)
+summary(model_1_2)
+```
+
+**Model 3**: Using stepwise algorithm for both direction (BIC criteria) on **Model 1**.
+
+```{r}
+n<-nrow(attend_train)
+model_1_3<-step(model_1_1, k=log(n))
+```
+
+```{r}
+summary(model_1_3)
+```
+
+Comparing model 1, model 2 and model 3
+
+```{r}
+model_stats <- function(models) {
+  aic_values <- numeric(length(models))
+  bic_values <- numeric(length(models))
+  num_predictors <- numeric(length(models))
+  predictor_names <- vector("list", length(models))
+  
+  # Loop over models and compute AIC, BIC, and number of predictors
+  for (i in seq_along(models)) {
+    aic_values[i] <- AIC(models[[i]])
+    bic_values[i] <- BIC(models[[i]])
+    coef_names <- names(coef(models[[i]]))
+    num_predictors[i] <- length(coef_names) - 1
+    predictor_names[[i]] <- paste(coef_names[-1], collapse = ", ")
+  }
+  
+  data.frame(Model = seq_along(models), AIC = aic_values, BIC = bic_values, NumPredictors = num_predictors, Predictors = unlist(predictor_names))
+}
+
+model_stats(list(model_1_1, model_1_2, model_1_3))
+```
+
+As we see, the model 3 has lowest number of predictors but has the smallest BIC. Howerver, the difference between BIC values is not much significant. We will test if we could use the model 3.
+
+**The hypothesis test (model 1 and model 3):**
+
+$H_0$: coefficient of priGPA= 0
+
+$H_\alpha$: coefficient of priGPA$\ne$ 0
+
+Hypothesis testing: we use **anova** function to test whether the reduced model can be used
+
+\tcolorbox
+
+```{r}
+anova(model_1_1, model_1_3)
+```
+
+```{=tex}
+\endtcolorbox
+```
+Since p-value = 0.6266 which is larger than significant level, 0.05. Thus, we fail to reject the null hypothesis $H_0$. In other words, we can conclude that removing variable priGPA does not affect much the fit of models.
+
+**The hypothesis test (model 2 and model 3):**
+
+$H_0$: coefficient of priGPA\*soph= 0
+
+$H_\alpha$: coefficient of priGPA\*soph$\ne$ 0
+
+Hypothesis testing: we use **anova** function to test whether the reduced model can be used
+
+\tcolorbox
+
+```{r}
+anova(model_1_2, model_1_3)
+```
+
+```{=tex}
+\endtcolorbox
+```
+Since p-value = 0.6266 which is larger than significant level, 0.05. Thus, we fail to reject the null hypothesis $H_0$. In other words, we can conclude that removing variable priGPA\*soph does not affect much the fit of models.
+
+### Independence testing
+
+```{r}
+lag.plot(model_1_3$residuals)
+```
+
+$H_0$: There is no correlation among the residuals.
+
+$H_\alpha$: The residuals are autocorrelated.
+
+\tcolorbox
+
+```{r}
+car::durbinWatsonTest(model_1_3)
+```
+
+```{=tex}
+\endtcolorbox
+```
+The D-W test statistic is 2.003933 which lies between the between 1.5 and 2.5 and p-value is 0.946. ***As a result, autocorrelation is probably not a cause for concern.***
+
+### Stability testing
+
+$H_0$: Homoscedasticity is present (the residuals are distributed with equal variance).
+
+$H_\alpha$: Heteroscedasticity is present (the residuals are not distributed with equal variance).
+
+\tcolorbox
+
+```{r}
+bptest(model_1_3)
+```
+
+```{=tex}
+\endtcolorbox
+```
+The test statistic for the studentized Breusch-Pagan test is 1.5008, with 2 degrees of freedom. To make more sense, the p-value of the test is 0.4722, which is greater than the commonly used significance level 𝛼 = 0.05. Thus, we fail to reject the null hypothesis $H_0$ that homoscedasticity is present. In other words, there is **enough evidence** to conclude that ***the residuals of regression model are distributed with equal variance.***
+
+### Normality testing
+
+\$H_0\$: The residuals of regression model is normally distributed.
+
+$H_\alpha$: The residuals of regression model is not normally distributed.
+
+\tcolorbox
+
+```{r}
+shapiro.test(model_1_3$residuals)
+```
+
+```{=tex}
+\endtcolorbox
+```
+The test statistic for the Shapiro-Wilk normality test is 0.99813. And the p-value of the test is 0.8267, which is much greater than the commonly used significance level of 0.05. Thus, we fail to reject $H_0$. In other words, there is ***enough evidence*** to conclude that ***The residuals of regression model is normally distributed.***
+
+### Model expression
+
+Based on independence, stability and normality testing, we accept model 3 for estimate the final score
+
+The equation:
+
+$$
+\widehat{final} = (0.270285 \times termGPA + 0.033822 \times ACT + 1.132269) * 10
+$$
+
+The fitted line reveals that:
+
+-   If the termGPA, ACT, are all 0, the maximum final score is 11.323.
+
+-   If the termGPA is increased by 1 unit and the other preidcot remain constanst, the final score is increased by 2.756 unit
+
+-   If the ACT is increased by 1 unit, the final score is increased by 0.338 unit
+
+### Prediction
+
+We will do predict on the validation test and the Root mean square error is:
+
+```{r}
+predict_final_scale4 <- predict(model_1_3, newdata = attend_valid)
+
+#RMSE (Root mean square error)
+sqrt(mean(((predict_final_scale4 - attend_valid$final)*10)^2))
+```
+
+```{r}
+data <- data.frame(
+  Predicted = predict(model_1_3, newdata = attend_valid) * 10,
+  Observed = attend_valid$final * 10
+)
+
+ggplot(data, aes(x = Predicted, y = Observed)) +
+  geom_point() +
+  geom_abline(intercept = 0, slope = 1, color = "red", size = 2) +
+  xlab("Predicted Values") +
+  ylab("Observed Values") +
+  theme_bw()
+```
+
+# Activity 2
+
+```{r}
+insurance_data<-read.csv("insurance_data.csv", header = TRUE, na.strings = "")
+```
+
+## About the dataset
+
+This dataset contains insightful information related to insurance claims, giving us an in-depth look into the demographic patterns of those receiving them. The dataset contains information on patient age, gender, BMI (Body Mass Index), blood pressure levels, diabetic status, number of children, smoking status and region. By analyzing these key factors across geographical areas and across different demographics such as age or gender we can gain a greater understanding of who is most likely to receive an insurance claim. This understanding gives us valuable insight that can be used to inform our decision making when considering potential customers for our services. On a broader scale it can inform public policy by allowing for more targeted support for those who are most in need and vulnerable. These kinds of insights are extremely valuable and this dataset provides us with the tools we need to uncover them!
+
+The dataset has `r dim(insurance_data)[2]` columns and `r dim(insurance_data)[1]` observations
+
+1.  index: surrogate key index
+
+2.  PatientID: ID of patient
+
+3.  age: age of patient
+
+4.  gender: gender of patient
+
+5.  bmi: the body mass index (BMI) is a measure that uses your height and weight to work out if your weight is healthy
+
+6.  bloodpressure: percent classes attended
+
+7.  diabetic: whether the insured person is diabetic or not
+
+8.  children: number of children of the insured person
+
+9.  smoker: whether the insured person is a smoker or not.
+
+10. region: region where patient live
+
+11. claim: amount of the insurance claim
+
+**Goal**
+
+-   Identifying trends in insurance claims based on age, gender, BMI, and blood pressure.
+
+-   Developing targeted marketing campaigns for customers at high risk of making an insurance claim.
+
+-   Investigating correlations between health traits (such as BMI and blood pressure) with the likelihood of making a claim
+
+Sample data in datasets
+
+```{r}
+head(insurance_data)
+```
+
+## Cleaning datasets
+
+Consider about the type of attributes:
+
+```{r}
+str(insurance_data)
+```
+
+```{r}
+sum(is.na(insurance_data))
+```
+
+```{r}
+insurance_data %>%
+  filter(!complete.cases(.))
+```
+
+Omit the row has NA value in **region** attribute
+
+```{r}
+insurance_data<-insurance_data %>%
+  filter(!is.na(region))
+                         
+```
+
+Replace the NA value in age attribute by mean
+
+```{r}
+insurance_data$age[is.na(insurance_data$age)] = mean(insurance_data$age,na.rm = T)
+```
+
+Verify the data
+
+```{r}
+sum(is.na(insurance_data))
+```
+
+Remove the index and patientID from data
+
+```{r}
+insurance_data<-insurance_data[,-c(1,2)]
+```
+
+```{r}
+insurance_data_clean <- insurance_data
+```
+
+Encode categorical variable by factor function
+
+```{r}
+insurance_data$gender = factor(insurance_data$gender,
+                               labels = sort(unique(insurance_data$gender)))
+
+insurance_data$diabetic = factor(insurance_data$diabetic,
+                                 labels = sort(unique(insurance_data$diabetic)))
+
+insurance_data$smoker = factor(insurance_data$smoker,
+                               labels = sort(unique(insurance_data$smoker)))
+
+insurance_data$children = factor(insurance_data$children,
+                                 labels = sort(unique(insurance_data$children)))
+
+insurance_data$region = factor(insurance_data$region,
+                               labels = sort(unique(insurance_data$region)))
+```
+
+## Correlation
+
+```{r out.width = "\\textwidth"}
+insurance_data %>%
+  fastDummies::dummy_cols(
+    select_columns = c("gender", "diabetic", "smoker","children","region"), 
+    remove_first_dummy = TRUE, remove_selected_columns = TRUE) %>%
+  cor(method = 'pearson') %>%
+  corrplot(tl.pos="lt", tl.col="black", tl.cex=0.75)
+```
+
+According to figure, the **claim** is strongly affected by the **smoke status**, **bloodpressure** and **bmi**.
+
+## Descriptive statistics
+
+### Gender
+
+```{r}
+insurance_data %>%
+  group_by(gender) %>%
+  summarise(count = n()) %>%
+  ggplot(aes(x="", y=count, fill=gender)) +
+    geom_bar(width = 1, stat = "identity") +
+    coord_polar("y", start=0)+
+    theme_bw() +
+    ggtitle("Distribution of Gender") +
+    theme(plot.title = element_text(hjust = 0.5),
+            axis.text = element_blank(),
+            axis.title = element_blank(),
+            panel.grid = element_blank()) +
+    geom_label(aes(label = paste0(round(count/sum(count)*100), "%")),colour = "black",
+            position = position_stack(vjust = 0.5),
+            show.legend = FALSE)
+```
+
+The gender in survey are equal
+
+```{r}
+insurance_data %>%
+  ggplot(aes(x=gender, y=claim, fill = gender)) +
+  geom_violin() +
+  geom_boxplot(show.legend = FALSE,width=0.1) +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+According to the boxplot, both genders have the same average claim amount. Additionally, the boxplot for both genders has the same distribution with two peaks, one at around \$10,000 and the other at nearly \$40,000. However, the female gender group has a higher number of outliers, indicating that there are more cases of unusually high indemnity insurance in this group. In other words, while the average claim amount is the same for both genders, there are more instances of high claims among females.
+
+### Number of children
+
+```{r}
+insurance_data %>%
+  ggplot(aes(x=children, y=claim, fill = children)) +
+  geom_boxplot() +
+  scale_fill_brewer(palette = "Set2") +
+  theme_bw() +
+  xlab("Number of children") +
+  ggtitle("Boxplot of claim by number of children") +
+  theme(plot.title = element_text(hjust = 0.5))
+  
+```
+
+The chart above shows that families with 2 to 3 children have the widest distribution, ranging from about 8000 to nearly 20000, showing that the amount of insurance claims received is higher than that of other families. On the other hand, families with 4 to 5 children have a narrower distribution, showing that these two groups have the lowest frequency of receiving insurance claims. In particular, family groups have a very low concentration level, showing that the number of insurance claims in these groups is not high, most of them are concentrated at less than 20000. However, the boxplot chart of groups with 0 and 1 children have more outliers than other groups. This shows that families with no children or only one child have relatively large fluctuations in the amount of insurance claims, with some cases having unusually high claims.
+
+### Region
+
+```{r}
+insurance_data %>%
+  group_by(region) %>%
+  summarise(count = n()) %>%
+  ggplot(aes(x="", y=count, fill=region)) +
+    geom_bar(width = 1, stat = "identity") +
+    coord_polar("y", start=0)+
+    theme_bw() +
+    ggtitle("Distribution of Region") +
+    theme(plot.title = element_text(hjust = 0.5),
+            axis.text = element_blank(),
+            axis.title = element_blank(),
+            panel.grid = element_blank()) +
+    geom_label(aes(label = paste0(round(count/sum(count)*100), "%")),colour = "black",
+            position = position_stack(vjust = 0.5),
+            show.legend = FALSE)
+```
+
+```{r}
+insurance_data %>%
+  ggplot(aes(x = reorder(region, region, function(x) -length(x)), fill = gender)) +
+  geom_bar(position="dodge") +
+    #scale_fill_brewer(palette="Set2") +
+    ggtitle("Number of Insurance Claimants by Gender, by Region")+
+    xlab("Region")+
+    ylab("Number of patients")+
+    theme_bw()+
+    theme(plot.title = element_text(hjust = 0.5))
+    
+```
+
+Patients in the Southeast have significantly more claims than any other region
+
+```{r}
+insurance_data %>%
+  ggplot(aes(x=region, y=claim, fill=gender)) +
+    geom_boxplot() +
+    #scale_fill_brewer(palette="Set2") +
+    ggtitle("Claim Value by Region, by Gender") +
+    theme_bw()
+    
+```
+
+The plot revealts that claim median value lies in the rang of around 10,000-15,000 for all the regions, for both the genders. Moreover, the claim value outliers are rampant for all the regions, for both the genders
+
+### BMI
+
+```{r}
+bw = 2
+n_obs = dim(insurance_data)[1]
+
+insurance_data %>%
+  ggplot(aes(x=bmi))+
+    geom_histogram(binwidth = bw)+
+    theme_bw()+
+    labs(x='BMI', 
+         y='Number of patient', 
+         title = 'Histogram of BMI')+
+    theme(plot.title = element_text(hjust = 0.5)) +
+    stat_function(fun = function(x) dnorm(x, mean = mean(insurance_data$bmi), sd = sd(insurance_data$bmi)) * bw * n_obs, color = "red")
+```
+
+The bmi attribute has a typical normal distribution, with a tendency to concentrate more from 25 to 35.
+
+```{r}
+insurance_data %>%
+  ggplot(aes(x=bmi, y=claim)) +
+  geom_point() +
+  geom_smooth(method=lm, formula=y~x, se = FALSE) +
+  theme_bw() +
+  xlab("BMI") +
+  ggtitle("Claim by BMI") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+The claim seems to be not linear depending on Bmi. In fact, the graph depicts 2 cluster.
+
+### Blood pressure
+
+```{r}
+bw = 5
+n_obs = dim(insurance_data)[1]
+
+insurance_data %>%
+  ggplot(aes(x=bloodpressure))+
+    geom_histogram(binwidth = bw)+
+    theme_bw()+
+    labs(x='Blood pressure', 
+         y='Number of patient', 
+         title = 'Histogram of blood pressure')+
+    theme(plot.title = element_text(hjust = 0.5)) +
+    stat_function(fun = function(x) dnorm(x, mean = mean(insurance_data$bloodpressure), sd = sd(insurance_data$bloodpressure)) * bw * n_obs, color = "red")
+```
+
+Blood pressure chart has right skewed, showing that the majority of patient have a normal blood pressure value, between 80 and 100. However, there are a few people in the pre-hypertension group when this index falls between 120 and 140.
+
+```{r}
+insurance_data %>%
+  ggplot(aes(x=bloodpressure, y=claim)) +
+  geom_point() +
+  geom_smooth(method=lm, formula=y~x, se = FALSE) +
+  theme_bw() +
+  xlab("BMI") +
+  ggtitle("Claim by bloodpressure") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+The graph shows that blood pressure readings seem to have a weak and positive correlation with the amount of insurance claims. In the normal blood pressure group, this value usually falls between 0 and 20000 and there are some outliers with a much higher number of claims than the majority. Although the number of patients in the pre-hypertension group is not much, all claims are above 20000.
+
+According American Heart Association, the blood pressure can be categorized as follow:
+
+-   normal: blood pressure less than 120
+
+-   high: blood pressure lies greater or equal to 120
+
+Let's construct a attribute for blood pressure level called **bp_level**:
+
+```{r}
+insurance_data$bp_level[insurance_data$bloodpressure < 120] = "normal"
+insurance_data$bp_level[insurance_data$bloodpressure >= 120] = "high"
+
+insurance_data$bp_level = factor(insurance_data$bp_level, 
+                                 levels=c("normal", "high"))
+```
+
+```{r}
+insurance_data %>%
+  group_by(bp_level) %>%
+  summarise(count = n()) %>%
+  ggplot(aes(x="", y=count, fill=bp_level)) +
+    geom_bar(width = 1, stat = "identity") +
+    coord_polar("y", start=0)+
+    theme_bw() +
+    ggtitle("Distribution of blood pressure level") +
+    theme(plot.title = element_text(hjust = 0.5),
+            axis.text = element_blank(),
+            axis.title = element_blank(),
+            panel.grid = element_blank()) +
+    geom_label(aes(label = paste0(round(count/sum(count)*100), "%")),colour = "black",
+            position = position_stack(vjust = 0.5),
+            show.legend = FALSE)
+```
+
+The number of patients who have high blood pressure is quite small respect to the total patients.
+
+### Smoker
+
+```{r}
+insurance_data %>%
+  group_by(smoker) %>%
+  summarise(count = n()) %>%
+  ggplot(aes(x="", y=count, fill=smoker)) +
+    geom_bar(width = 1, stat = "identity") +
+    coord_polar("y", start=0)+
+    theme_bw() +
+    ggtitle("Distribution of Smoker") +
+    theme(plot.title = element_text(hjust = 0.5),
+            axis.text = element_blank(),
+            axis.title = element_blank(),
+            panel.grid = element_blank()) +
+    geom_label(aes(label = paste0(round(count/sum(count)*100), "%")),colour = "black",
+            position = position_stack(vjust = 0.5),
+            show.legend = FALSE)
+```
+
+```{r}
+insurance_data %>%
+  ggplot(aes(x=smoker, y=claim, fill = smoker)) +
+  geom_violin() +
+  geom_boxplot(show.legend = FALSE,width=0.1) +
+  theme_bw() +
+  ggtitle("Claim by smoke habit") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+Through the two graphs above, it can be seen that although the number of smokers in the data set is not high, the claim concentration of this group is much higher than that of the non-smoker group, most of which are in the range from 20000 to 40000. The non-smoker group has lower concentration and shorter allocation path length. In addition, the appearance of many outliers with a high number of claims indicates, showing that there is an instability in the number of claim receipts in the non-smoker group. This shows that a smoker tend to receive more claims than a non-smokers.
+
+```{r}
+insurance_data %>%
+  group_by(smoker) %>%
+  summarise(claim = sum(claim)) %>%
+  ggplot(aes(x="", y=claim, fill=smoker)) +
+  geom_bar(width = 1, stat = "identity") +
+  coord_polar("y", start=0) +
+  theme_bw() +
+  ggtitle("Total claims by smokers & non-smokers in % value") +
+  scale_fill_brewer(palette = 'Set2') +
+  theme(plot.title = element_text(hjust = 0.5),
+          axis.text = element_blank(),
+          axis.title = element_blank(),
+          panel.grid = element_blank()) +
+  geom_label(aes(label = paste0(round(claim/sum(claim)*100), "%")),colour = "black",
+          position = position_stack(vjust = 0.5),
+          show.legend = FALSE)
+```
+
+From the pie chart, it can be confirmed that although the number in the data set is only 20%, the smoker group tends to receive more claims since the total claims received account for nearly 1/2 of the total. The reason might be the smoker group temp to face health problems more than the other.
+
+### Diabetic
+
+```{r}
+insurance_data %>%
+  group_by(diabetic) %>%
+  summarise(count = n()) %>%
+  ggplot(aes(x="", y=count, fill=diabetic)) +
+    geom_bar(width = 1, stat = "identity") +
+    coord_polar("y", start=0)+
+    theme_bw() +
+    ggtitle("Distribution of Diabetic patient") +
+    theme(plot.title = element_text(hjust = 0.5),
+            axis.text = element_blank(),
+            axis.title = element_blank(),
+            panel.grid = element_blank()) +
+    geom_label(aes(label = paste0(round(count/sum(count)*100), "%")),colour = "black",
+            position = position_stack(vjust = 0.5),
+            show.legend = FALSE)
+```
+
+The rate of people having insurance with diabetic and non diabectic status is the same.
+
+```{r}
+insurance_data %>%
+  ggplot(aes(x=diabetic, y=claim, fill = diabetic)) +
+  geom_violin() +
+  geom_boxplot(show.legend = FALSE,width=0.1) +
+  theme_bw() +
+  ggtitle("Claim by diabetic status") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+From the boxplots, we observe that in both groups, there are several cases that has an unsually claim which roundly 30000 to 50000. Moreover, the average claim of both group share the same number with nearly 10000. In advance, considering the distribution between the two groups in the boxplot, it seems that there is not much correlation between the amount of claim and diabetic status, or in other words, being diabetic does not affect much the amount of claims
+
+### Age
+
+```{r}
+bw = 2
+n_obs = dim(insurance_data)[1]
+
+insurance_data %>%
+  ggplot(aes(x=age))+
+    geom_histogram(binwidth = bw)+
+    theme_bw()+
+    labs(x='Age', 
+         y='Number of patient', 
+         title = 'Histogram of age')+
+    theme(plot.title = element_text(hjust = 0.5)) +
+    stat_function(fun = function(x) dnorm(x, mean = mean(insurance_data$age), sd = sd(insurance_data$age)) * bw * n_obs, color = "red")
+```
+
+The graph shows that there is a diverse distribution of ages in the data set.
+
+```{r}
+insurance_data %>% 
+  ggplot(aes(x=gender, y=age, fill=gender))+
+  geom_violin() +
+  geom_boxplot(show.legend = FALSE, width=0.3)+
+  theme_bw()+
+  labs(x='Gender', y='Age', title = "Number of Insurance Claimants by Gender and Age")+
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+The plot shows age of female insurance claimants is higher, has a higher median than males
+
+```{r}
+insurance_data %>%
+  ggplot(aes(x=age, y=claim, color=smoker)) +
+  geom_point() +
+  #scale_color_brewer(palette="Set2") +
+  ggtitle("Impact of Age & Smoking Habit on Claim Value") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+The plot reveals that claim value is typiclly high for people with smoking habit
+
+```{r}
+insurance_data %>%
+  ggplot(aes(x=age, y=claim, color=diabetic)) +
+  geom_point() +
+  #scale_color_brewer(palette="Set2") +
+  ggtitle("Impact of Age & iabetes Disease on Claim Value") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+The plot reveals that there is no significant correlation between claim value and prevalence of diabetes.
+
+We create a attribute for age group called age_group. Since the patients in the data has age greater or equal to 18 years old, we split into 3 groups:
+
+-   adult: age lies between 18 and 39
+
+-   middle: age lies between 40 and 59
+
+-   older adults: age greater than 60
+
+```{r}
+insurance_data$age_group[insurance_data$age >= 18 & insurance_data$age <= 39] = 'adult'
+insurance_data$age_group[insurance_data$age >= 40 & insurance_data$age <= 59] = 'middle'
+insurance_data$age_group[insurance_data$age >= 60] = 'older adult'
+```
+
+```{r}
+insurance_data %>%
+  group_by(age_group) %>%
+  summarise(count = n()) %>%
+  ggplot(aes(x="", y=count, fill=age_group)) +
+    geom_bar(width = 1, stat = "identity") +
+    coord_polar("y", start=0)+
+    theme_bw() +
+    ggtitle("Distribution of age groups") +
+    theme(plot.title = element_text(hjust = 0.5),
+            axis.text = element_blank(),
+            axis.title = element_blank(),
+            panel.grid = element_blank()) +
+    geom_label(aes(label = paste0(round(count/sum(count)*100), "%")),colour = "black",
+            position = position_stack(vjust = 0.5),
+            show.legend = FALSE)
+```
+
+The rate of patients who are older adult is much smaller compare to the other two groups. Most of patients are adult
+
+```{r}
+insurance_data %>%
+  ggplot(aes(x=age_group, fill=bp_level)) +
+  geom_bar(position="dodge") +
+    ggtitle("Number of Insurance Claimants by Blood pressure level and Age group")+
+    xlab("Age group")+
+    ylab("Number of patients")+
+    theme_bw()+
+    theme(plot.title = element_text(hjust = 0.5))
+    
+```
+
+In the adult and middle age groups, the number of patients with high blood pressure is almost equal. However, there are no patients with high blood pressure among the older adult population.
+
+```{r}
+insurance_data %>%
+  ggplot(aes(x = reorder(region, region, function(x) -length(x)), fill = age_group)) +
+  geom_bar(position="dodge") +
+    #scale_fill_brewer(palette="Set2") +
+    ggtitle("Number of Insurance Claimants by Region and Age group")+
+    xlab("Region")+
+    ylab("Number of patients")+
+    theme_bw()+
+    theme(plot.title = element_text(hjust = 0.5))
+    
+```
+
+According to the plot, most of patients or insurance claimants are in adult group. While the opposite pattern is true for older adult.
+
+### Claim
+
+```{r}
+bw = 2000
+n_obs = dim(insurance_data)[1]
+
+insurance_data %>%
+  ggplot(aes(x=claim))+
+    geom_histogram(binwidth = bw)+
+    theme_bw()+
+    labs(x='Claim', 
+         y='Number of patient', 
+         title = 'Histogram of claim')+
+    theme(plot.title = element_text(hjust = 0.5)) +
+    stat_function(fun = function(x) dnorm(x, mean = mean(insurance_data$claim), sd = sd(insurance_data$claim)) * bw * n_obs, color = "red")
+```
+
+The histogram of claim has right skewed shows that the majority of patients have a claim number below 20000. However, there are still many cases where this number is relatively high due to the characteristics of special patient groups, ranging from 20000 to 50000.
+
+## Hypothesis testing
+
+### Gender
+
+```{r}
+insurance_data %>%
+  group_by(gender) %>%
+  summarise(count = n()) %>%
+  ggplot(aes(x="", y=count, fill=gender)) +
+    geom_bar(width = 1, stat = "identity") +
+    coord_polar("y", start=0)+
+    theme_bw() +
+    ggtitle("Distribution of Gender") +
+    theme(plot.title = element_text(hjust = 0.5),
+            axis.text = element_blank(),
+            axis.title = element_blank(),
+            panel.grid = element_blank()) +
+    geom_label(aes(label = paste0(round(count/sum(count)*100), "%")),colour = "black",
+            position = position_stack(vjust = 0.5),
+            show.legend = FALSE)
+```
+
+$H_0$: The rate of male and female patients are equal.
+
+$H_\alpha$: The rate of male and female patients are different.
+
+Hypothesis Testing: Using prop.test function to test whether ***The rate of male and female patients are equal.***
+
+\tcolorbox
+
+```{r}
+table_gender <- table(insurance_data$gender)
+table_gender
+prop.test(table_gender, correct = FALSE, alternative = 'two.sided')
+
+```
+
+```{=tex}
+\endtcolorbox
+```
+Since p-value = 0.7222 which is greater than 0.05. Thus, we fail to reject the null hypothesis $H_0$ at significant level 𝛼 = 5%. Therefore, there is not sufficient evidence to conclude that The rate of male and female patients are different. In other words, we accept ***the rate of male and female patients share the same number.***
+
+### Smoker & claim
+
+```{r}
+insurance_data %>%
+  ggplot(aes(x=smoker, y=claim, fill = smoker)) +
+  geom_boxplot(show.legend = FALSE,width=0.1) +
+  theme_bw() +
+  ggtitle("Claim by smoke habit") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+$H_0$: The average claim of patient who is non smoker higher than or equal to that of patient who is smoker
+
+$H_\alpha$: The average claim of patient who is non smoker less than that of patient who is smoker.
+
+Hypothesis Testing: Using t.test function to test whether ***The average claim of patient who is non smoker less than that of patient who is smoker***
+
+\tcolorbox
+
+```{r}
+insurance_data %>%
+  select(claim, smoker) %>%
+  t.test(data = ., claim~smoker ,alternative='less')
+```
+
+```{=tex}
+\endtcolorbox
+```
+Since p-value \< 2.2e-16 which is extremely small and less than 0.05. Thus we reject the null hypothesis \$H_0\$ at significant level 𝛼 = 5%. Therefore, there is sufficient evidence to conclude that ***The average claim of patient who is non smoker less than that of patient who is smoker.***
+
+### Diabetic & gender
+
+```{r}
+insurance_data %>%
+  group_by(gender, diabetic) %>%
+  summarise(count = n()) %>%
+  mutate(percentage = count / sum(count) * 100) %>%
+  ggplot(aes(x = '', y = percentage, fill = diabetic))+
+    geom_bar(stat = 'identity') + 
+    coord_polar('y', start = 0) + 
+    facet_wrap(~gender, ncol = 3, scale = "fixed", nrow=1) + 
+    ggtitle('Percentage of diabetic patient by Gender') + 
+    xlab('') +
+    ylab('') +
+    theme_bw() +
+    theme(plot.title = element_text(hjust = 0.5))
+```
+
+$H_0$: The rate of diabetic in female patient equal to the rate of diabetic in male patient
+
+$H_\alpha$: The rate of diabetic in female patient different from the rate of diabetic in male patient
+
+Hypothesis Testing: Using prop.test function to test whether ***The rate of diabetic in female patient greater the rate of diabetic in male patient***
+
+\tcolorbox
+
+```{r}
+table_gender_diabetic <- table(insurance_data$gender, insurance_data$diabetic)
+table_gender_diabetic
+
+prop.test(table_gender_diabetic, correct = FALSE, alternative = 'two.sided')
+```
+
+```{=tex}
+\endtcolorbox
+```
+We observes the p-value = 0.5034 which is larger than 0.05. Thus, we fail to reject the null hypothesis $H_0$. In the other words, we accept that there is no difference between the rate of diabetic patient in two gender.
+
+### Bloodpressure & gender
+
+```{r}
+insurance_data %>%
+  ggplot(aes(x=gender, y=bloodpressure, fill = gender)) +
+  geom_boxplot(show.legend = FALSE,width=0.1) +
+  theme_bw() +
+  ggtitle("Bloodpressure by Gender") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+$H_0$: The mean of blood pressure in female patient equal to that in male patient.
+
+$H_\alpha$:The mean of blood pressure in female patient not equal to that in male patient.
+
+Hypothesis Testing: Using t.test function to test whether ***The mean of blood pressure in female patient not equal to that in male patient.***
+
+\tcolorbox
+
+```{r, echo=TRUE}
+insurance_data %>%
+  select(bloodpressure, gender) %>%
+  t.test(data = ., bloodpressure~gender ,alternative='two.sided')
+```
+
+```{=tex}
+\endtcolorbox
+```
+From the test, we observe that p-value = 0.6227 \> 0.05. Thus, we fail to reject null hypothesis $H_0$ at significant level $\alpha$ = 5%. In other words, we accept that there is no difference of the average bloodpressure between two gender.
+
+### Smoker & gender
+
+```{r}
+insurance_data %>%
+  group_by(gender, smoker) %>%
+  summarise(count = n()) %>%
+  mutate(percentage = count / sum(count) * 100) %>%
+  ggplot(aes(x = '', y = percentage, fill = smoker))+
+    geom_bar(stat = 'identity') + 
+    coord_polar('y', start = 0) + 
+    facet_wrap(~gender, ncol = 3, scale = "fixed", nrow=1) + 
+    ggtitle('Percentage of smoker by Gender') + 
+    xlab('') +
+    ylab('') +
+    theme_bw() +
+    theme(plot.title = element_text(hjust = 0.5))
+```
+
+$H_0$: The rate of smoker in female patient equal to that in male patient
+
+$H_\alpha$: The rate of smoker in female patient different from that in male patient
+
+Hypothesis Testing: Using prop.test function to test whether ***The rate of smoker in female patient different from that in male patient***
+
+\tcolorbox
+
+```{r}
+table_gender_smoker <- table(insurance_data$gender, insurance_data$smoker)
+table_gender_smoker <- table_gender_smoker[,c('Yes','No')]
+table_gender_smoker
+prop.test(table_gender_diabetic, correct = FALSE, alternative = 'two.sided')
+```
+
+```{=tex}
+\endtcolorbox
+```
+Since p-value=0.5034 which is greater than common significant level $\alpha$ = 5%. Thus, we fail to reject the null hypothesis $H_0$ at significant level $\alpha$ = 5%. In other words, there is no difference in percentage of smoker in two gender.
+
+We will test whether there is a relationship between gender and smoking status.
+
+$H_0$: The attirubtes smoker and gender are independent.
+
+$H_\alpha$: The attirubtes smoker and gender are not independent.
+
+Hypothesis Testing: Using chisq.test function to test whether ***The attirubtes smoker and gender are not independent.***
+
+\tcolorbox
+
+```{r}
+table_gender_smoker
+chisq.test(table_gender_smoker)
+```
+
+```{=tex}
+\endtcolorbox
+```
+Due to the fact that the p-value of 0.006277 is below the significant level of 5%. The null hypothesis $H_0$ is rejected. As a result, the test reveals a relationship between gender and smoking status.
+
+### Blood pressure level & age group
+
+We will investigate whether age and blood pressure are related.
+
+```{r}
+insurance_data %>%
+  ggplot(aes(x=age_group, fill=bp_level)) +
+  geom_bar(position="dodge") +
+    #scale_fill_brewer(palette="Set2") +
+    ggtitle("Number of Insurance Claimants by Gender, by Region")+
+    xlab("Age group")+
+    ylab("Number of patients")+
+    theme(plot.title = element_text(hjust = 0.5))+
+    theme_bw()
+```
+
+$H_0$: The attirubtes age and blood pressure are independent.
+
+$H_\alpha$: The attirubtes age and blood pressure are not independent.
+
+Hypothesis Testing: Using chisq.test function to test whether ***The attirubtes smoker and gender are not independent.***
+
+\tcolorbox
+
+```{r}
+table_age_bp <- table(insurance_data$age_group, insurance_data$bp_level)
+table_age_bp
+
+chisq.test(table_age_bp)
+```
+
+```{=tex}
+\endtcolorbox
+```
+Due to the fact that the p-value of 0.6033 is higher than the significant level of 5%. We fail to reject the null hypothesis $H_0$. As a result, the test shows that age and blood pressure are not related.
+
+## Regression model
+
+### Multicolinear
+
+```{r}
+vif_values<-car::vif(lm(claim ~ ., data = insurance_data_clean))
+
+
+vif_df <- data.frame(variable = rownames(vif_values), vif = vif_values[,c("GVIF")])
+
+# Reorder the factor levels of variable based on vif
+vif_df$variable <- factor(vif_df$variable, levels = vif_df$variable[order(vif_df$vif, decreasing = TRUE)])
+
+ggplot(vif_df, aes(x = variable, y = vif)) +
+  geom_bar(stat = "identity") +
+  ggtitle("Variance Inflation Factor") +
+  xlab("Predictor Variables") +
+  ylab("VIF") +
+  coord_flip() +
+  theme_bw()
+
+```
+
+Except for the region_southeast, all predictors have a VIF that is less than 2. The VIF of region_southeast, however, slightly exceeds 2. As a consequence, we can conclude that there is no strong correlation occur between predictors.
+
+### Data preparation
+
+```{r}
+insurance_data_clean %>%
+  ggplot(aes(x = "", y=claim)) +
+  geom_boxplot() +
+  scale_fill_brewer(palette = "Set2") +
+  theme_bw() +
+  xlab("") +
+  ggtitle("Boxplot of claim") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r}
+dim(insurance_data_clean)
+```
+
+```{r}
+index_outlier <- apply(insurance_data_clean[c('claim')],2,outliers)
+insurance_data_clean = insurance_data_clean[-index_outlier,]
+```
+
+```{r}
+dim(insurance_data_clean)
+```
+
+Split data to train and validation sets with ratio 80% - 20%
+
+```{r}
+smp_size <- floor(0.8 * nrow(insurance_data_clean))
+
+set.seed(42)
+
+index <- sample(seq_len(nrow(insurance_data_clean)), size = smp_size, replace = FALSE)
+```
+
+The dimension of train insurance data
+
+```{r}
+insurance_train = insurance_data_clean[index,] #training data set
+dim(insurance_train)
+```
+
+The dimension of validation insurance data
+
+```{r}
+insurance_valid = insurance_data_clean[-index,] #validation data set
+dim(insurance_valid)
+```
+
+### Variables selection
+
+#### Best subsets regression
+
+```{r}
+insurance.leaps<-regsubsets(claim~., data=insurance_train)
+```
+
+Using the scale of Adjust R-squared
+
+```{r}
+plot(insurance.leaps, scale = "adjr2")
+```
+
+From the figure, we observe that there are 5 models share the same value of Adjust R-squared which is 0.7. Regarding the same Adjust R-squared, adding more variable does not increase value of Adjust R-squared. Thus, we might favor the one with fewer variables.
+
+As a result, we select the following attributes for our regression model: bmi, bloodpressure, smoker, region.
+
+#### Stepwise regression
+
+Based on AIC score to add or remove variables.
+
+```{r, results='hide'}
+swr<-lm(claim~., data=insurance_data)
+swr_r<-step(swr, k=2)
+```
+
+\tcolorbox
+
+```{r}
+summary(swr_r)
+```
+
+```{=tex}
+\endtcolorbox
+```
+Thus, we select following variables for our regression model: bmi, bloodpressure, children, smoker, region.
+
+### Modeling
+
+**Model 1**: we construct model from variables which are selected from Best subsets regression method
+
+Thus, the preditors are: bmi, bloodpressure, smokerYes, region.
+
+\tcolorbox
+
+```{r}
+model_2_1 <- lm(claim ~ bmi + bloodpressure + smoker + region, 
+                data=insurance_train)
+summary(model_2_1)
+```
+
+```{=tex}
+\endtcolorbox
+```
+$$
+\begin{aligned}
+\widehat{claim} = \ &376.26 \times bmi + 232.44 \times bloodpressure + 20864.55 \times smoker \\ 
+- &1903.65 \times regionnorthwest - 3384.52 \times regionsoutheast - 2562.57 \times regionsouthwest 
+\end{aligned}
+$$
+
+Based on the result:
+
+-   The p-value of F-test is less than 2.2e-16 which is less than significant level $\alpha$ = 5%. This means there at least 1 variable can estimate the final score. In the other words, the model can use to estimate the final score
+
+-   The p-value of t test in all coefficients is less than significant level $\alpha$ = 5%. So we can conclude that all coefficients different from 0. Hence, attributes bmi, bloodpressure, smoker and region has a statically significant effect on final score.
+
+**Model 2**: we construct model from variables which are selected from stepwise regression method
+
+The predictors are: bmi, bloodpressure, smoker, region and children
+
+\tcolorbox
+
+```{r}
+model_2_2<-lm(claim ~ bmi + bloodpressure + smoker + region + children, 
+              data=insurance_train)
+summary(model_2_2)
+```
+
+```{=tex}
+\endtcolorbox
+```
+\$\$
+
+\$\$
+
+$$
+\begin{aligned}\widehat{claim} = \ &374.36 \times bmi + 232.87 \times bloodpressure + 20743.79 \times smoker \\ -&2019.86 \times regionnorthwest - 3375.52 \times regionsoutheast \\-&2646.75 \times regionsouthwest + 33.57 \times children1 + 1877.99 \times children2 \\ + &2063.65 \times children3 + 1725.76 \times children4 + 752.45 \times children5 + intercept\end{aligned}
+$$
+
+Based on the result:
+
+-   The p-value of F-test is less than 2.2e-16 which is less than significant level $\alpha$ = 5%. This means there at least 1 variable can estimate the final score. In the other words, the model can use to estimate the final score
+
+-   The p-value of t test of bmi, bloodpressure, smoker and region coefficients is less than significant level \$\\alpha\$ = 5% except. So we can conclude that all coefficients different from 0.
+
+-   Regarding children coefficients, the p-value of coefficients of children1, children4 and children5 are ,respectively. There figures higher than significant level $\alpha$ = 5%. Thus these coefficients are equal to 0. However, the p-value of coefficients of children2 and children3 are much smaller than 0.05. Then, we can state that these coefficient is not equal to 0. As a result, we need a test to check if we can omit the children variable.
+
+***The hypothesis test (model 1 and model 2):***
+
+$H_0$: coefficient of children = 0
+
+$H_\alpha$: coefficient of children $\ne$ 0
+
+Hypothesis testing: we use **anova** function to test whether the reduced model can be used
+
+\tcolorbox
+
+```{r}
+anova(model_2_1, model_2_2)
+```
+
+```{=tex}
+\endtcolorbox
+```
+From the test output, the p-value = 0.005426 which is less than 0.05. So the null hypothesis $H_0$ is resoundingly rejected. In other words, we will use the 'full' model (model 2)
+
+### Independence testing
+
+```{r}
+lag.plot(model_2_2$residuals)
+```
+
+$H_0$: There is no correlation among the residuals.
+
+$H_\alpha$: The residuals are autocorrelated.
+
+\tcolorbox
+
+```{r}
+car::durbinWatsonTest(model_2_2)
+```
+
+```{=tex}
+\endtcolorbox
+```
+The D-W test statistic is 2.002177 which lies between the between 1.5 and 2.5 and p-value is 0.926. ***As a result, autocorrelation is probably not a cause for concern.***
+
+### Stability testing
+
+$H_0$: Homoscedasticity is present (the residuals are distributed with equal variance).
+
+$H_\alpha$: Heteroscedasticity is present (the residuals are not distributed with equal variance).
+
+\tcolorbox
+
+```{r}
+bptest(model_2_2)
+```
+
+```{=tex}
+\endtcolorbox
+```
+The test statistic for the studentized Breusch-Pagan test is 5.3667, with 5 degrees of freedom. To make more sense, the p-value of the test is 0.3461, which is greater than the commonly used significance level 𝛼 = 0.05. Thus, we fail to reject the null hypothesis $H_0$ that homoscedasticity is present. In other words, there is **enough evidence** to conclude that ***the residuals of regression model are distributed with equal variance.***
+
+### Normality testing
+
+$H_0$: The residuals of regression model is normally distributed.
+
+$H_\alpha$: The residuals of regression model is not normally distributed.
+
+\tcolorbox
+
+```{r}
+shapiro.test(model_2_2$residuals)
+```
+
+```{=tex}
+\endtcolorbox
+```
+The test statistic for the Shapiro-Wilk normality test is 0.99778. And the p-value of the test is 0.6999, which is much greater than the commonly used significance level of 0.05. Thus, we fail to reject $H_0$. In other words, there is ***enough evidence*** to conclude that ***The residuals of regression model is normally distributed.***
+
+### Model expression
+
+Based on independence, stability and normality testing, we accept model 1 for estimate the claim.
+
+The equation:
+
+```{=tex}
+\begin{aligned}\widehat{claim} = \ &374.36 \times bmi + 232.87 \times bloodpressure + 20743.79 \times smoker \\ -&2019.86 \times regionnorthwest - 3375.52 \times regionsoutheast \\-&2646.75 \times regionsouthwest + 33.57 \times children1 + 1877.99 \times children2 \\ + &2063.65 \times children3 + 1725.76 \times children4 + 752.45 \times children5 + intercept\end{aligned}
+```
+The fitted line reveals that:
+
+-   If all the coefficients equal to 0, then the claim is -12226.61 unit
+
+-   If the bmi is increased by 1 unit and the other predictors remain constant, the claim is increased by 232.87 unit.
+
+-   If the bloodpressure is increased by 1 unit and the other predictors remain constant, the claim is increased by 232.87 unit.
+
+-   If the the patient is smoker (smoker = 1) and the other predictors remain constant, the claim is increased by 20743.79 unit.
+
+-   If the the patient live in region northwest, southest and southwest and the other predictors remain constant, the claim is decreased by 2019, 2020 and 2021 unit respectively.
+
+-   If the patient has 1, 2, 3, 4 and 5 childrens and the other predictors remain constant, the claim is increased by 2019, 2020, 1212, 4234 and 2021 unit respectively.
+
+### Prediction
+
+We will do predict on the validation test and the Root mean square error is:
+
+```{r}
+predict_claim <- predict(model_2_2, newdata = insurance_valid)
+
+#RMSE (Root mean square error) 
+sqrt(mean((predict_claim - insurance_valid$claim)^2)) #RMSE càng gần 0 càng tốt
+
+```
+
+```{r}
+data <- data.frame(
+  Predicted = predict_claim <- predict(model_2_2, newdata = insurance_valid),
+  Observed = insurance_valid$claim
+)
+
+ggplot(data, aes(x = Predicted, y = Observed)) +
+  geom_point() +
+  geom_abline(intercept = 0, slope = 1, color = "red", size = 2) +
+  xlab("Predicted Values") +
+  ylab("Observed Values") +
+  theme_bw()
+```
